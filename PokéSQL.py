@@ -703,7 +703,6 @@ def check_new_moves(cursor, conn, pokemon, new_level):
         print(f"Error checking new moves: {err}")
 
 def gain_experience(enemy_level, winning_pokemon_name=None):
-
     global cplayer
     try:
         # Get all Pokemon in the team
@@ -712,35 +711,29 @@ def gain_experience(enemy_level, winning_pokemon_name=None):
             WHERE player_id = %s AND health > 0
         """, (cplayer['id'],))
         team_pokemon = cursor.fetchall()
-        
         if not team_pokemon:
             return
-            
         # Calculate base exp with 2.625x
         base_exp = int((enemy_level * 5) * 2.625)
-        
         for pokemon in team_pokemon:
-            exp_multiplier = DIFFICULTY_SCALING['exp_multiplier'](pokemon['level'])
-            
+            if not isinstance(pokemon, dict):
+                continue
+            exp_multiplier = DIFFICULTY_SCALING['exp_multiplier'](pokemon.get('level', 1))
             # Full exp (with multiplier) for the winning Pokemon, 1/3 for others
-            if winning_pokemon_name and pokemon['name'] == winning_pokemon_name:
+            if winning_pokemon_name and pokemon.get('name') == winning_pokemon_name:
                 exp_gain = int(base_exp * exp_multiplier)
-                print(f"\n{pokemon['name']} gained {exp_gain} experience for the victory!")
+                print(f"\n{pokemon.get('name', '?')} gained {exp_gain} experience for the victory!")
             else:
                 exp_gain = int((base_exp * exp_multiplier) / 3)  # Reduced exp for team members
-                print(f"{pokemon['name']} gained {exp_gain} experience from watching!")
-            
+                print(f"{pokemon.get('name', '?')} gained {exp_gain} experience from watching!")
             cursor.execute("""
                 UPDATE player_pokemons 
                 SET experience = experience + %s
                 WHERE id = %s
-            """, (exp_gain, pokemon['id']))
-            
+            """, (exp_gain, pokemon.get('id')))
             # Check for level up immediately for each Pokemon
-            check_level_up(pokemon['id'])
-            
+            check_level_up(pokemon.get('id'))
         dbconnect.commit()
-        
     except mysql.connector.Error as err:
         print(f"Database error while gaining experience: {err}")
     except Exception as e:
@@ -818,69 +811,39 @@ def check_level_up(pokemon_id):
 # -------------------- Database Setup Functions --------------------
 def ensure_db():
     global dbconnect, cursor
-    if dbconnect is None or not (hasattr(dbconnect, 'is_connected') and dbconnect.is_connected()):
-        dbconnect = mysql.connector.connect(**dbconfig)
-    if cursor is None or getattr(cursor, 'connection', None) is None or not dbconnect.is_connected():
-        cursor = dbconnect.cursor(dictionary=True)
+    try:
+        if dbconnect is None or not (hasattr(dbconnect, 'is_connected') and dbconnect.is_connected()):
+            dbconnect = mysql.connector.connect(**dbconfig)
+        if cursor is None or getattr(cursor, 'connection', None) is None or not dbconnect.is_connected():
+            cursor = dbconnect.cursor(dictionary=True)
+    except Exception as e:
+        print(f"[DB ERROR] Could not connect to database: {e}")
+        dbconnect = None
+        cursor = None
 
 def setup_database():
     global dbconnect, cursor
-    # Connect to MySQL server (not a specific database)
-    if dbconnect is None or not (hasattr(dbconnect, 'is_connected') and dbconnect.is_connected()):
-        dbconnect = mysql.connector.connect(**dbconfig)
-    cursor = dbconnect.cursor(dictionary=True)
-    # Create database if it doesn't exist
-    cursor.execute("CREATE DATABASE IF NOT EXISTS pokemon_game")
-    cursor.execute("USE pokemon_game")
-    # Now create tables if they don't exist
-    cursor.execute("""CREATE TABLE IF NOT EXISTS players (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        name VARCHAR(50) UNIQUE,
-        poke_balls INT DEFAULT 10,
-        great_balls INT DEFAULT 0,
-        ultra_balls INT DEFAULT 0,
-        master_balls INT DEFAULT 1,
-        potions INT DEFAULT 5,
-        super_potions INT DEFAULT 0,
-        hyper_potions INT DEFAULT 0,
-        max_potions INT DEFAULT 0,
-        badges INT DEFAULT 0,
-        current_pokemon VARCHAR(50)
-    )""")
-    cursor.execute("""CREATE TABLE IF NOT EXISTS pokemons (
-        name VARCHAR(50) PRIMARY KEY,
-        type VARCHAR(20),
-        base_health INT,
-        base_attack INT,
-        base_defense INT,
-        base_speed INT,
-        evolve_level INT,
-        evolve_to VARCHAR(50),
-        is_legendary BOOLEAN DEFAULT FALSE
-    )""")
-    cursor.execute("""CREATE TABLE IF NOT EXISTS player_pokemons (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        player_id INT,
-        name VARCHAR(50),
-        level INT DEFAULT 5,
-        experience INT DEFAULT 0,
-        health INT DEFAULT 100,
-        max_health INT DEFAULT 100,
-        attack INT DEFAULT 50,
-        defense INT DEFAULT 50,
-        speed INT DEFAULT 50,
-        type VARCHAR(20),
-        moves VARCHAR(200),
-        FOREIGN KEY (player_id) REFERENCES players(id)
-    )""")
-    initialize_pokemon_database()
-    create_admin_account()
-
-def initialize_pokemon_database():
-    global dbconnect, cursor
-    # Ensure pokemons table exists before deleting
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS pokemons (
+    try:
+        if dbconnect is None or not (hasattr(dbconnect, 'is_connected') and dbconnect.is_connected()):
+            dbconnect = mysql.connector.connect(**dbconfig)
+        cursor = dbconnect.cursor(dictionary=True)
+        cursor.execute("CREATE DATABASE IF NOT EXISTS pokemon_game")
+        cursor.execute("USE pokemon_game")
+        cursor.execute("""CREATE TABLE IF NOT EXISTS players (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            name VARCHAR(50) UNIQUE,
+            poke_balls INT DEFAULT 10,
+            great_balls INT DEFAULT 0,
+            ultra_balls INT DEFAULT 0,
+            master_balls INT DEFAULT 1,
+            potions INT DEFAULT 5,
+            super_potions INT DEFAULT 0,
+            hyper_potions INT DEFAULT 0,
+            max_potions INT DEFAULT 0,
+            badges INT DEFAULT 0,
+            current_pokemon VARCHAR(50)
+        )""")
+        cursor.execute("""CREATE TABLE IF NOT EXISTS pokemons (
             name VARCHAR(50) PRIMARY KEY,
             type VARCHAR(20),
             base_health INT,
@@ -890,52 +853,97 @@ def initialize_pokemon_database():
             evolve_level INT,
             evolve_to VARCHAR(50),
             is_legendary BOOLEAN DEFAULT FALSE
-        )
-    """)
-    cursor.execute("DELETE FROM pokemons")
-    for pokemon in pokemon_data:
+        )""")
+        cursor.execute("""CREATE TABLE IF NOT EXISTS player_pokemons (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            player_id INT,
+            name VARCHAR(50),
+            level INT DEFAULT 5,
+            experience INT DEFAULT 0,
+            health INT DEFAULT 100,
+            max_health INT DEFAULT 100,
+            attack INT DEFAULT 50,
+            defense INT DEFAULT 50,
+            speed INT DEFAULT 50,
+            type VARCHAR(20),
+            moves VARCHAR(200),
+            FOREIGN KEY (player_id) REFERENCES players(id)
+        )""")
+        initialize_pokemon_database()
+        create_admin_account()
+    except Exception as e:
+        print(f"[DB ERROR] setup_database failed: {e}")
+
+def initialize_pokemon_database():
+    global dbconnect, cursor
+    try:
         cursor.execute("""
-            INSERT INTO pokemons 
-            (name, type, base_health, base_attack, base_defense, base_speed, 
-             evolve_level, evolve_to, is_legendary)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-        """, pokemon)
-    dbconnect.commit()
+            CREATE TABLE IF NOT EXISTS pokemons (
+                name VARCHAR(50) PRIMARY KEY,
+                type VARCHAR(20),
+                base_health INT,
+                base_attack INT,
+                base_defense INT,
+                base_speed INT,
+                evolve_level INT,
+                evolve_to VARCHAR(50),
+                is_legendary BOOLEAN DEFAULT FALSE
+            )
+        """)
+        cursor.execute("DELETE FROM pokemons")
+        for pokemon in pokemon_data:
+            cursor.execute("""
+                INSERT INTO pokemons 
+                (name, type, base_health, base_attack, base_defense, base_speed, 
+                 evolve_level, evolve_to, is_legendary)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, pokemon)
+        dbconnect.commit()
+    except Exception as e:
+        print(f"[DB ERROR] initialize_pokemon_database failed: {e}")
 
 def create_admin_account():
     global dbconnect, cursor
-    # Only add admin if not already present
-    cursor.execute("SELECT * FROM players WHERE name = 'admin'")
-    if not cursor.fetchone():
-        cursor.execute("""
-            INSERT INTO players 
-            (name, poke_balls, great_balls, ultra_balls, master_balls, 
-             potions, super_potions, hyper_potions, max_potions, badges)
-            VALUES ('admin', 999, 999, 999, 999, 999, 999, 999, 999, 8)
-        """)
-        dbconnect.commit()
+    try:
+        cursor.execute("SELECT * FROM players WHERE name = 'admin'")
+        admin_row = cursor.fetchone()
+        if not admin_row:
+            cursor.execute("""
+                INSERT INTO players 
+                (name, poke_balls, great_balls, ultra_balls, master_balls, 
+                 potions, super_potions, hyper_potions, max_potions, badges)
+                VALUES ('admin', 999, 999, 999, 999, 999, 999, 999, 999, 8)
+            """)
+            dbconnect.commit()
+    except Exception as e:
+        print(f"[DB ERROR] create_admin_account failed: {e}")
 
 def load_or_create_player(name):
     global cplayer, dbconnect, cursor
     ensure_db()
-    cursor.execute("USE pokemon_game")
-    cursor.execute("SELECT * FROM players WHERE name = %s", (name,))
-    player = cursor.fetchone()
-    if player is None:
-        cursor.execute("""
-            INSERT INTO players 
-            (name, poke_balls, great_balls, ultra_balls, master_balls, 
-             potions, super_potions, hyper_potions, max_potions, badges) 
-            VALUES (%s, 10, 0, 0, 1, 5, 0, 0, 0, 0)
-        """, (name,))
-        dbconnect.commit()
+    try:
+        cursor.execute("USE pokemon_game")
         cursor.execute("SELECT * FROM players WHERE name = %s", (name,))
         player = cursor.fetchone()
-        print(f"Welcome new trainer {name}!")
-    else:
-        print(f"Welcome back, {name}!")
-    cplayer = player
-    return player
+        if player is None:
+            cursor.execute("""
+                INSERT INTO players 
+                (name, poke_balls, great_balls, ultra_balls, master_balls, 
+                 potions, super_potions, hyper_potions, max_potions, badges) 
+                VALUES (%s, 10, 0, 0, 1, 5, 0, 0, 0, 0)
+            """, (name,))
+            dbconnect.commit()
+            cursor.execute("SELECT * FROM players WHERE name = %s", (name,))
+            player = cursor.fetchone()
+            print(f"Welcome new trainer {name}!")
+        else:
+            print(f"Welcome back, {name}!")
+        cplayer = player
+        return player
+    except Exception as e:
+        print(f"[DB ERROR] load_or_create_player failed: {e}")
+        cplayer = None
+        return None
 
 def auto_select_strongest_pokemon():
     global cplayer, dbconnect, cursor
@@ -977,11 +985,15 @@ def get_current_pokemon():
 def show_team():
     global cplayer, dbconnect, cursor
     ensure_db()
+    player_id = cplayer.get('id') if isinstance(cplayer, dict) else getattr(cplayer, 'id', None)
+    if cursor is None or player_id is None:
+        print("[ERROR] Database connection or player not available.")
+        return []
     cursor.execute("""
         SELECT * FROM player_pokemons 
         WHERE player_id = %s 
         ORDER BY level DESC
-    """, (cplayer['id'],))
+    """, (player_id,))
     pokemon_list = cursor.fetchall() or []
     print("\n👥 Your Team 👥")
     type_icons = {
@@ -992,11 +1004,21 @@ def show_team():
         "Steel": "⚙️", "Fairy": "🎀"
     }
     for i, pokemon in enumerate(pokemon_list, 1):
+        if not isinstance(pokemon, dict) and hasattr(pokemon, "_asdict"):
+            pokemon = pokemon._asdict()
+        elif not isinstance(pokemon, dict):
+            pokemon = dict(pokemon) if hasattr(pokemon, "keys") else {}
         type_icon = type_icons.get(pokemon.get('type', 'Normal'), "⚪")
-        health = pokemon.get('health', 0)
-        max_health = pokemon.get('max_health', 1)
-        health_percent = (health / max_health) * 100 if max_health else 0
-        health_bar = "🟩" * int(health_percent / 20) + "⬜" * (5 - int(health_percent / 20))
+        health = pokemon.get('health', 0) or 0
+        max_health = pokemon.get('max_health', 1) or 1
+        try:
+            health_percent = (float(health) / float(max_health)) * 100 if max_health else 0
+        except Exception:
+            health_percent = 0
+        try:
+            health_bar = "🟩" * int(health_percent / 20) + "⬜" * (5 - int(health_percent / 20))
+        except Exception:
+            health_bar = ""
         print(f"\n{i}) {type_icon} {pokemon.get('name', '?')} (Lv.{pokemon.get('level', '?')})")
         print(f"   Type: {pokemon.get('type', '?')}")
         print(f"   HP: {health_bar} {health}/{max_health}")
@@ -1045,6 +1067,10 @@ def show_battle_menu(player_pokemon, enemy_name, enemy_health, enemy_level, is_w
 def show_items(show_empty=False):
     global cplayer, dbconnect, cursor
     ensure_db()
+    player_id = cplayer.get('id') if isinstance(cplayer, dict) else getattr(cplayer, 'id', None)
+    if cursor is None or player_id is None:
+        print("[ERROR] Database connection or player not available.")
+        return {}, [], []
     try:
         cursor.execute("""
             SELECT 
@@ -1052,30 +1078,34 @@ def show_items(show_empty=False):
                 potions, super_potions, hyper_potions, max_potions
             FROM players 
             WHERE id = %s
-        """, (cplayer['id'],))
+        """, (player_id,))
         items = cursor.fetchone() or {}
+        if not isinstance(items, dict) and hasattr(items, "_asdict"):
+            items = items._asdict()
+        elif not isinstance(items, dict):
+            items = dict(items) if hasattr(items, "keys") else {}
     except Exception as e:
         print(f"Error fetching items: {e}")
         items = {}
     print("\n=== Your Items ===")
     available_balls = []
     available_potions = []
-    if items.get('poke_balls', 0) > 0 or show_empty:
-        available_balls.append(('Poke Ball', items.get('poke_balls', 0), 1))
-    if items.get('great_balls', 0) > 0 or show_empty:
-        available_balls.append(('Great Ball', items.get('great_balls', 0), 2))
-    if items.get('ultra_balls', 0) > 0 or show_empty:
-        available_balls.append(('Ultra Ball', items.get('ultra_balls', 0), 3))
-    if items.get('master_balls', 0) > 0 or show_empty:
-        available_balls.append(('Master Ball', items.get('master_balls', 0), 4))
-    if items.get('potions', 0) > 0 or show_empty:
-        available_potions.append(('Potion', items.get('potions', 0), 5, 20))
-    if items.get('super_potions', 0) > 0 or show_empty:
-        available_potions.append(('Super Potion', items.get('super_potions', 0), 6, 50))
-    if items.get('hyper_potions', 0) > 0 or show_empty:
-        available_potions.append(('Hyper Potion', items.get('hyper_potions', 0), 7, 120))
-    if items.get('max_potions', 0) > 0 or show_empty:
-        available_potions.append(('Max Potion', items.get('max_potions', 0), 8, 999))
+    if (isinstance(items.get('poke_balls', 0), (int, float)) and items.get('poke_balls', 0) > 0) or show_empty:
+        available_balls.append(('Poke Ball', items.get('poke_balls', 0) or 0, 1))
+    if (isinstance(items.get('great_balls', 0), (int, float)) and items.get('great_balls', 0) > 0) or show_empty:
+        available_balls.append(('Great Ball', items.get('great_balls', 0) or 0, 2))
+    if (isinstance(items.get('ultra_balls', 0), (int, float)) and items.get('ultra_balls', 0) > 0) or show_empty:
+        available_balls.append(('Ultra Ball', items.get('ultra_balls', 0) or 0, 3))
+    if (isinstance(items.get('master_balls', 0), (int, float)) and items.get('master_balls', 0) > 0) or show_empty:
+        available_balls.append(('Master Ball', items.get('master_balls', 0) or 0, 4))
+    if (isinstance(items.get('potions', 0), (int, float)) and items.get('potions', 0) > 0) or show_empty:
+        available_potions.append(('Potion', items.get('potions', 0) or 0, 5, 20))
+    if (isinstance(items.get('super_potions', 0), (int, float)) and items.get('super_potions', 0) > 0) or show_empty:
+        available_potions.append(('Super Potion', items.get('super_potions', 0) or 0, 6, 50))
+    if (isinstance(items.get('hyper_potions', 0), (int, float)) and items.get('hyper_potions', 0) > 0) or show_empty:
+        available_potions.append(('Hyper Potion', items.get('hyper_potions', 0) or 0, 7, 120))
+    if (isinstance(items.get('max_potions', 0), (int, float)) and items.get('max_potions', 0) > 0) or show_empty:
+        available_potions.append(('Max Potion', items.get('max_potions', 0) or 0, 8, 999))
     if available_balls:
         print("\nPokeballs:")
         for ball_name, quantity, idx in available_balls:
@@ -1151,8 +1181,14 @@ def use_potion(potion_type, potion_name):
 
 def get_wild_pokemon_group(player_level, size):
     """Get a group of wild Pokemon of similar levels."""
+    global cursor
+    ensure_db()
     pokemons = []
     min_level, max_level = DIFFICULTY_SCALING['wild_level_range'](player_level)
+    
+    if cursor is None:
+        print("[ERROR] Database connection not available.")
+        return pokemons
     
     for _ in range(size):
         cursor.execute("""
@@ -1160,10 +1196,19 @@ def get_wild_pokemon_group(player_level, size):
             WHERE NOT is_legendary 
             ORDER BY RAND() LIMIT 1
         """)
-        pokemon = cursor.fetchone()
-        if pokemon:
+        pokemon_result = cursor.fetchone()
+        if pokemon_result:
+            # Convert to dict if needed
+            if not isinstance(pokemon_result, dict) and hasattr(pokemon_result, "_asdict"):
+                pokemon = pokemon_result._asdict()
+            elif not isinstance(pokemon_result, dict):
+                pokemon = dict(pokemon_result) if hasattr(pokemon_result, "keys") else {}
+            else:
+                pokemon = pokemon_result
+                
             level = random.randint(min_level, max_level)
-            health = pokemon['base_health'] + (level * 5)
+            base_health = pokemon.get('base_health', 1) or 1
+            health = base_health + (level * 5)
             pokemons.append({
                 'pokemon': pokemon,
                 'level': level,
@@ -1174,17 +1219,32 @@ def get_wild_pokemon_group(player_level, size):
 
 def get_legendary_pokemon(player_level):
     """Get a legendary Pokemon as a boss battle."""
+    global cursor
+    ensure_db()
+    if cursor is None:
+        print("[ERROR] Database connection not available.")
+        return None
+        
     cursor.execute("""
         SELECT * FROM pokemons 
         WHERE is_legendary 
         ORDER BY RAND() LIMIT 1
     """)
-    pokemon = cursor.fetchone()
-    if pokemon:
+    pokemon_result = cursor.fetchone()
+    if pokemon_result:
+        # Convert to dict if needed
+        if not isinstance(pokemon_result, dict) and hasattr(pokemon_result, "_asdict"):
+            pokemon = pokemon_result._asdict()
+        elif not isinstance(pokemon_result, dict):
+            pokemon = dict(pokemon_result) if hasattr(pokemon_result, "keys") else {}
+        else:
+            pokemon = pokemon_result
+            
         # Legendary Pokemon are always higher level than the player
         level = player_level + random.randint(5, 10)
         # Legendary Pokemon have boosted health
-        health = int(pokemon['base_health'] * 1.5) + (level * 7)
+        base_health = pokemon.get('base_health', 1) or 1
+        health = int(base_health * 1.5) + (level * 7)
         return {
             'pokemon': pokemon,
             'level': level,
@@ -1232,21 +1292,34 @@ def switch_pokemon(cursor, conn, player_id, current_pokemon):
 
 def battle_wild_pokemon():
     """Battle with a wild Pokemon"""
+    global cplayer, dbconnect, cursor
+    ensure_db()
     try:
         # Get player's current Pokemon
         pokemon = get_current_pokemon()
         if not pokemon:
             print("No active Pokemon! Cannot battle!")
             return
-        cursor.execute("SELECT MAX(level) as max_level FROM player_pokemons WHERE player_id = %s", (cplayer['id'],))
-        player_highest_level = cursor.fetchone()['max_level']
-        cursor.execute("SELECT badges FROM players WHERE id = %s", (cplayer['id'],))
-        badges = cursor.fetchone()['badges']
+            
+        player_id = cplayer.get('id') if isinstance(cplayer, dict) else getattr(cplayer, 'id', None)
+        if cursor is None or player_id is None:
+            print("[ERROR] Database connection or player not available.")
+            return
+            
+        cursor.execute("SELECT MAX(level) as max_level FROM player_pokemons WHERE player_id = %s", (player_id,))
+        max_level_result = cursor.fetchone()
+        player_highest_level = max_level_result.get('max_level', 5) if max_level_result else 5
+        
+        cursor.execute("SELECT badges FROM players WHERE id = %s", (player_id,))
+        badges_result = cursor.fetchone()
+        badges = badges_result.get('badges', 0) if badges_result else 0
+        
         is_legendary = random.random() < DIFFICULTY_SCALING['legendary_chance'](badges)
         wild = None
         wild_level = None
         wild_health = None
         stat_multiplier = None
+        
         if is_legendary:
             wild_obj = get_legendary_pokemon(player_highest_level)
             if wild_obj is None:
@@ -1264,14 +1337,28 @@ def battle_wild_pokemon():
                 WHERE NOT is_legendary 
                 ORDER BY RAND() LIMIT 1
             """)
-            wild = cursor.fetchone()
+            wild_result = cursor.fetchone()
+            if not wild_result:
+                print("No wild Pokemon available!")
+                return
+                
+            # Convert to dict if needed
+            if not isinstance(wild_result, dict) and hasattr(wild_result, "_asdict"):
+                wild = wild_result._asdict()
+            elif not isinstance(wild_result, dict):
+                wild = dict(wild_result) if hasattr(wild_result, "keys") else {}
+            else:
+                wild = wild_result
+                
             min_level, max_level = DIFFICULTY_SCALING['wild_level_range'](player_highest_level)
             wild_level = random.randint(min_level, max_level)
             stat_multiplier = DIFFICULTY_SCALING['enemy_stat_multiplier'](player_highest_level)
-            wild_health = int((wild['base_health'] + (wild_level * 5)) * stat_multiplier)
-            print(f"\n🌿 A wild {wild['name']} appeared! (Lv.{wild_level})")
+            base_health = wild.get('base_health', 1) or 1
+            wild_health = int((base_health + (wild_level * 5)) * stat_multiplier)
+            print(f"\n🌿 A wild {wild.get('name', '?')} appeared! (Lv.{wild_level})")
+            
         while wild_health > 0:
-            choice = show_battle_menu(pokemon, wild['name'], wild_health, wild_level)
+            choice = show_battle_menu(pokemon, wild.get('name', '?'), wild_health, wild_level)
             
             if choice == '1':  # Attack
                 moves = show_moves(pokemon)
@@ -1282,32 +1369,32 @@ def battle_wild_pokemon():
                 move_choice = ask(f"Choose a move (1-{len(moves)}): ")
                 if move_choice.isdigit() and 1 <= int(move_choice) <= len(moves):
                     chosen_move = moves[int(move_choice) - 1]
-                    damage = calculate_damage(pokemon, wild, chosen_move, pokemon['level'])
+                    damage = calculate_damage(pokemon, wild, chosen_move, pokemon.get('level', 1))
                     wild_health -= damage
-                    print(f"\n⚔️ {pokemon['name']} used {chosen_move}!")
+                    print(f"\n⚔️ {pokemon.get('name', '?')} used {chosen_move}!")
                     print(f"💥 It dealt {damage} damage!")
                     
                     if wild_health <= 0:
-                        print(f"🎯 The wild {wild['name']} fainted!")
+                        print(f"🎯 The wild {wild.get('name', '?')} fainted!")
                         give_rewards(get_battle_difficulty(wild_level))
-                        gain_experience(wild_level, pokemon['name'])
+                        gain_experience(wild_level, pokemon.get('name', '?'))
                         break
                         
                     # Wild pokemon attacks back with a random move
-                    wild_moves = get_starter_moves(wild['type'])
+                    wild_moves = get_starter_moves(wild.get('type', 'Normal'))
                     wild_move = random.choice(wild_moves)
                     wild_damage = int(calculate_damage(wild, pokemon, wild_move, wild_level, True) * stat_multiplier)
-                    print(f"\n⚔️ Wild {wild['name']} used {wild_move}!")
+                    print(f"\n⚔️ Wild {wild.get('name', '?')} used {wild_move}!")
                     apply_damage(wild_damage)
                     
                     # Check if player's Pokemon fainted
                     pokemon = get_current_pokemon()
-                    if not pokemon or pokemon['health'] <= 0:
+                    if not pokemon or pokemon.get('health', 0) <= 0:
                         print(f"\n💀 Your Pokemon fainted!")
                         # Try to switch to another Pokemon
                         auto_select_strongest_pokemon()
                         pokemon = get_current_pokemon()
-                        if not pokemon or pokemon['health'] <= 0:
+                        if not pokemon or pokemon.get('health', 0) <= 0:
                             print("❌ No usable Pokemon left! Fleeing to Pokemon Center...")
                             return
                 else:
@@ -1325,32 +1412,32 @@ def battle_wild_pokemon():
                         SELECT * FROM player_pokemons 
                         WHERE player_id = %s 
                         ORDER BY level DESC
-                    """, (cplayer['id'],))
+                    """, (player_id,))
                     pokemon_list = cursor.fetchall() or []
                     
                     if 1 <= int(switch) <= len(pokemon_list):
                         new_pokemon = pokemon_list[int(switch) - 1]
-                        if new_pokemon['health'] <= 0:
+                        if new_pokemon.get('health', 0) <= 0:
                             print("That Pokemon has fainted!")
                         else:
                             cursor.execute("""
                                 UPDATE players 
                                 SET current_pokemon = %s 
                                 WHERE id = %s
-                            """, (new_pokemon['name'], cplayer['id']))
+                            """, (new_pokemon.get('name', ''), player_id))
                             dbconnect.commit()
                             pokemon = new_pokemon
-                            print(f"Go! {pokemon['name']}!")
+                            print(f"Go! {pokemon.get('name', '?')}!")
                             
                             # Wild Pokemon gets a free attack after switching
-                            wild_moves = get_starter_moves(wild['type'])
+                            wild_moves = get_starter_moves(wild.get('type', 'Normal'))
                             wild_move = random.choice(wild_moves)
                             wild_damage = int(calculate_damage(wild, pokemon, wild_move, wild_level, True) * stat_multiplier)
-                            print(f"\n⚔️ Wild {wild['name']} used {wild_move}!")
+                            print(f"\n⚔️ Wild {wild.get('name', '?')} used {wild_move}!")
                             apply_damage(wild_damage)
                     
             elif choice == '4':  # Throw Pokeball
-                if try_catch_pokemon(wild['name'], wild_level, wild_health, wild):
+                if try_catch_pokemon(wild.get('name', '?'), wild_level, wild_health, wild):
                     break
                     
             elif choice == '5':  # Run
@@ -1361,10 +1448,10 @@ def battle_wild_pokemon():
                     return
                 print("❌ Can't escape!")
                 # Wild pokemon attacks after failed run
-                wild_moves = get_starter_moves(wild['type'])
+                wild_moves = get_starter_moves(wild.get('type', 'Normal'))
                 wild_move = random.choice(wild_moves)
                 wild_damage = int(calculate_damage(wild, pokemon, wild_move, wild_level, True) * stat_multiplier)
-                print(f"\n⚔️ Wild {wild['name']} used {wild_move}!")
+                print(f"\n⚔️ Wild {wild.get('name', '?')} used {wild_move}!")
                 apply_damage(wild_damage)
                 
             else:
@@ -1432,10 +1519,16 @@ def calculate_damage(attacker, defender, move_name, level, is_wild=False):
         return 5  # Return minimal damage on error
 
 def apply_damage(damage):
-    global cplayer
+    global cplayer, dbconnect, cursor
+    ensure_db()
     try:
         if not cplayer:
             print("Error: No active player")
+            return
+            
+        player_id = cplayer.get('id') if isinstance(cplayer, dict) else getattr(cplayer, 'id', None)
+        if cursor is None or player_id is None:
+            print("Error: Database connection or player not available")
             return
             
         pokemon = get_current_pokemon()
@@ -1443,14 +1536,17 @@ def apply_damage(damage):
             print("Error: No active Pokemon")
             return
             
-        new_health = max(0, pokemon['health'] - damage)
+        current_health = pokemon.get('health', 0) or 0
+        new_health = max(0, current_health - damage)
+        pokemon_name = pokemon.get('name', '')
+        
         cursor.execute("""
             UPDATE player_pokemons 
             SET health = %s
             WHERE player_id = %s AND name = %s
-        """, (new_health, cplayer['id'], pokemon['name']))
+        """, (new_health, player_id, pokemon_name))
         dbconnect.commit()
-        print(f"Your {pokemon['name']} took {damage} damage!")
+        print(f"Your {pokemon_name} took {damage} damage!")
     except mysql.connector.Error as err:
         print(f"Database error while applying damage: {err}")
     except Exception as e:
@@ -1460,11 +1556,15 @@ def get_player_highest_level():
     global cplayer, dbconnect, cursor
     ensure_db()
     try:
+        player_id = cplayer.get('id') if isinstance(cplayer, dict) else getattr(cplayer, 'id', None)
+        if cursor is None or player_id is None:
+            return 5
+            
         cursor.execute("""
             SELECT MAX(level) as max_level 
             FROM player_pokemons 
             WHERE player_id = %s
-        """, (cplayer['id'],))
+        """, (player_id,))
         result = cursor.fetchone()
         return result.get('max_level', 5) if result else 5
     except Exception as e:
@@ -1474,6 +1574,11 @@ def get_player_highest_level():
 def try_catch_pokemon(name, level, health, wild_pokemon):
     global cplayer, dbconnect, cursor
     ensure_db()
+    player_id = cplayer.get('id') if isinstance(cplayer, dict) else getattr(cplayer, 'id', None)
+    if cursor is None or player_id is None:
+        print("[ERROR] Database connection or player not available.")
+        return False
+        
     items, available_balls, _ = show_items(show_empty=False)
     if not available_balls:
         print("\nYou don't have any Pokeballs!")
@@ -1500,7 +1605,7 @@ def try_catch_pokemon(name, level, health, wild_pokemon):
         return False
     ball_type = f"{selected_ball.lower().replace(' ', '_')}s"
     try:
-        cursor.execute("SELECT COUNT(*) as count FROM player_pokemons WHERE player_id = %s", (cplayer['id'],))
+        cursor.execute("SELECT COUNT(*) as count FROM player_pokemons WHERE player_id = %s", (player_id,))
         team_count_result = cursor.fetchone()
         team_count = team_count_result.get('count', 0) if team_count_result else 0
     except Exception as e:
@@ -1516,7 +1621,7 @@ def try_catch_pokemon(name, level, health, wild_pokemon):
                 SELECT * FROM player_pokemons 
                 WHERE player_id = %s 
                 ORDER BY level DESC
-            """, (cplayer['id'],))
+            """, (player_id,))
             team = cursor.fetchall() or []
         except Exception as e:
             print(f"Error fetching team: {e}")
@@ -1552,7 +1657,7 @@ def try_catch_pokemon(name, level, health, wild_pokemon):
             UPDATE players 
             SET {ball_type} = {ball_type} - 1 
             WHERE id = %s
-        """, (cplayer['id'],))
+        """, (player_id,))
         dbconnect.commit()
     except Exception as e:
         print(f"Error updating ball count: {e}")
@@ -1563,7 +1668,7 @@ def try_catch_pokemon(name, level, health, wild_pokemon):
                 cursor.execute("""
                     DELETE FROM player_pokemons 
                     WHERE id = %s AND player_id = %s
-                """, (replace_pokemon.get('id'), cplayer['id']))
+                """, (replace_pokemon.get('id'), player_id))
                 print(f"\n{replace_pokemon.get('name', '?')} was released to make room for {name}!")
             # Assign moves based on level and randomize
             available_moves = get_available_moves(wild_pokemon.get('type', 'Normal'), level)
@@ -1575,7 +1680,7 @@ def try_catch_pokemon(name, level, health, wild_pokemon):
                 (player_id, name, level, health, max_health, attack, defense, speed, type, moves)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, (
-                cplayer['id'], 
+                player_id, 
                 name, 
                 level,
                 wild_pokemon.get('base_health', 1) + (level * 5),
@@ -1587,7 +1692,7 @@ def try_catch_pokemon(name, level, health, wild_pokemon):
                 moves_str
             ))
             dbconnect.commit()
-            cursor.execute("SELECT * FROM players WHERE id = %s", (cplayer['id'],))
+            cursor.execute("SELECT * FROM players WHERE id = %s", (player_id,))
             cplayer = cursor.fetchone()
             print(f"\nGotcha! {name} was caught with the {selected_ball}!")
             return True
@@ -1601,6 +1706,11 @@ def try_catch_pokemon(name, level, health, wild_pokemon):
 def give_rewards(difficulty):
     global cplayer, dbconnect, cursor
     ensure_db()
+    player_id = cplayer.get('id') if isinstance(cplayer, dict) else getattr(cplayer, 'id', None)
+    if cursor is None or player_id is None:
+        print("[ERROR] Database connection or player not available.")
+        return
+        
     rewards = REWARD_RANGES[difficulty]
     print(f"\nRewards earned:")
     for item_name, min_amt, max_amt in rewards['items']:
@@ -1612,7 +1722,7 @@ def give_rewards(difficulty):
                     UPDATE players 
                     SET {column} = {column} + %s
                     WHERE id = %s
-                """, (amount, cplayer['id']))
+                """, (amount, player_id))
                 print(f"{item_name}: x{amount}")
             except Exception as e:
                 print(f"Error giving reward {item_name}: {e}")
