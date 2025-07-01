@@ -825,13 +825,15 @@ def ensure_db():
 
 def setup_database():
     global dbconnect, cursor
-    ensure_db()
-    cursor.execute("DROP DATABASE IF EXISTS pokemon_game")
-    cursor.execute("CREATE DATABASE pokemon_game")
+    # Connect to MySQL server (not a specific database)
+    if dbconnect is None or not (hasattr(dbconnect, 'is_connected') and dbconnect.is_connected()):
+        dbconnect = mysql.connector.connect(**dbconfig)
+    cursor = dbconnect.cursor(dictionary=True)
+    # Create database if it doesn't exist
+    cursor.execute("CREATE DATABASE IF NOT EXISTS pokemon_game")
     cursor.execute("USE pokemon_game")
-    
-    # Create tables with existing schema
-    cursor.execute("""CREATE TABLE players (
+    # Now create tables if they don't exist
+    cursor.execute("""CREATE TABLE IF NOT EXISTS players (
         id INT AUTO_INCREMENT PRIMARY KEY,
         name VARCHAR(50) UNIQUE,
         poke_balls INT DEFAULT 10,
@@ -845,8 +847,7 @@ def setup_database():
         badges INT DEFAULT 0,
         current_pokemon VARCHAR(50)
     )""")
-    
-    cursor.execute("""CREATE TABLE pokemons (
+    cursor.execute("""CREATE TABLE IF NOT EXISTS pokemons (
         name VARCHAR(50) PRIMARY KEY,
         type VARCHAR(20),
         base_health INT,
@@ -857,8 +858,7 @@ def setup_database():
         evolve_to VARCHAR(50),
         is_legendary BOOLEAN DEFAULT FALSE
     )""")
-    
-    cursor.execute("""CREATE TABLE player_pokemons (
+    cursor.execute("""CREATE TABLE IF NOT EXISTS player_pokemons (
         id INT AUTO_INCREMENT PRIMARY KEY,
         player_id INT,
         name VARCHAR(50),
@@ -873,13 +873,26 @@ def setup_database():
         moves VARCHAR(200),
         FOREIGN KEY (player_id) REFERENCES players(id)
     )""")
-    
     initialize_pokemon_database()
     create_admin_account()
 
 def initialize_pokemon_database():
+    global dbconnect, cursor
+    # Ensure pokemons table exists before deleting
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS pokemons (
+            name VARCHAR(50) PRIMARY KEY,
+            type VARCHAR(20),
+            base_health INT,
+            base_attack INT,
+            base_defense INT,
+            base_speed INT,
+            evolve_level INT,
+            evolve_to VARCHAR(50),
+            is_legendary BOOLEAN DEFAULT FALSE
+        )
+    """)
     cursor.execute("DELETE FROM pokemons")
-    # [Keep the existing pokemon_data list]
     for pokemon in pokemon_data:
         cursor.execute("""
             INSERT INTO pokemons 
@@ -890,13 +903,17 @@ def initialize_pokemon_database():
     dbconnect.commit()
 
 def create_admin_account():
-    cursor.execute("""
-        INSERT INTO players 
-        (name, poke_balls, great_balls, ultra_balls, master_balls, 
-         potions, super_potions, hyper_potions, max_potions, badges)
-        VALUES ('admin', 999, 999, 999, 999, 999, 999, 999, 999, 8)
-    """)
-    dbconnect.commit()
+    global dbconnect, cursor
+    # Only add admin if not already present
+    cursor.execute("SELECT * FROM players WHERE name = 'admin'")
+    if not cursor.fetchone():
+        cursor.execute("""
+            INSERT INTO players 
+            (name, poke_balls, great_balls, ultra_balls, master_balls, 
+             potions, super_potions, hyper_potions, max_potions, badges)
+            VALUES ('admin', 999, 999, 999, 999, 999, 999, 999, 999, 8)
+        """)
+        dbconnect.commit()
 
 def load_or_create_player(name):
     global cplayer, dbconnect, cursor
@@ -2080,6 +2097,8 @@ def show_moves(pokemon):
 
 def main():
     print("Welcome to Pokemon CLI RPG!")
+    # Ensure database and tables are created before using them
+    setup_database()  # This will create DB and tables if missing
     ensure_db()
     cursor.execute("USE pokemon_game")
     
@@ -2088,12 +2107,14 @@ def main():
     is_admin = (name.lower() == 'admin')
     
     cursor.execute("SELECT COUNT(*) as count FROM player_pokemons WHERE player_id = %s", (cplayer['id'],))
-    if cursor.fetchone()['count'] == 0:
+    count_row = cursor.fetchone()
+    if count_row and (count_row.get('count', 0) == 0):
         choose_starter()
     
     while True:
         cursor.execute("SELECT badges FROM players WHERE id = %s", (cplayer['id'],))
-        badges = cursor.fetchone()['badges']
+        badges_row = cursor.fetchone()
+        badges = badges_row.get('badges', 0) if badges_row else 0
         
         print("\n" + "="*50)
         print("🎮 Pokemon CLI RPG - Main Menu 🎮")
@@ -2122,8 +2143,8 @@ def main():
         elif choice == '5': heal_all_pokemon()
         elif choice == '6':
             print("Game saved. Thanks for playing!")
-            cursor.close()
-            dbconnect.close()
+            if cursor: cursor.close()
+            if dbconnect: dbconnect.close()
             break
         elif choice == '7' and is_admin:
             admin_menu()
